@@ -34,13 +34,17 @@ body{background:#07090f;background-size:cover;background-position:center;backgro
 .sel{border-color:#fff}
 .dots{display:flex;gap:3px;height:6px}.dot{width:6px;height:6px;border-radius:50%}
 .bar{height:7px;background:rgba(255,255,255,.1);border-radius:9px;overflow:hidden}.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--ac),color-mix(in srgb,var(--ac) 60%,#fff));border-radius:9px}
-</style></style>
+@keyframes mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55)}50%{box-shadow:0 0 0 9px rgba(239,68,68,0)}}
+#btnMic.mic-on{background:#ef4444;color:#fff;border-color:#ef4444;animation:mic-pulse 1.1s infinite}
+.vtxt{font-size:.85rem;color:#9ca3af;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:8px 10px;margin-bottom:12px}
+</style>
 </head>
 <body>
 <!-- Barra superior fija: solo acciones rápidas (+ menú en móvil) -->
 <header class="fixed top-0 inset-x-0 md:left-64 h-14 z-30 flex items-center gap-2 px-3 border-b border-white/10" style="background:rgba(7,9,15,.7);backdrop-filter:blur(14px)">
   <button class="md:hidden btn2" onclick="toggleSb()" aria-label="Menú"><i class="fa-solid fa-bars"></i></button>
   <div class="flex-1"></div>
+  <button id="btnMic" class="btn2" onclick="startVoice()" aria-label="Registrar por voz" title="Registrar por voz"><i class="fa-solid fa-microphone"></i></button>
   <button class="btn" onclick="addTx('i')"><i class="fa-solid fa-plus"></i> Ingreso</button>
   <button class="btn" style="background:#f87171" onclick="addTx('g')"><i class="fa-solid fa-minus"></i> Gasto</button>
 </header>
@@ -82,7 +86,9 @@ const today=()=>fd(T0());
 const fmtD=d=>d.toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'});
 // Suma k meses a una fecha fijando el día (ajustado al fin de mes si hace falta)
 const addM=(date,k,day)=>{const t=new Date(date.getFullYear(),date.getMonth()+k,1);const dim=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();t.setDate(Math.min(day,dim));return t};
-const toast=m=>{const t=$('#toast');t.textContent=m;t.classList.remove('hidden');setTimeout(()=>t.classList.add('hidden'),2200)};
+const toast=m=>{const t=$('#toast');t.innerHTML='';t.textContent=m;t.classList.remove('hidden');clearTimeout(window._toastT);window._toastT=setTimeout(()=>t.classList.add('hidden'),2200)};
+const toastAction=(m,html)=>{const t=$('#toast');t.innerHTML=esc(m)+' '+html;t.classList.remove('hidden');clearTimeout(window._toastT);window._toastT=setTimeout(()=>t.classList.add('hidden'),6000)};
+const toastUndo=(m,id)=>toastAction(m,'<button onclick="delTx(\''+id+'\');$(\'#toast\').classList.add(\'hidden\')" style="text-decoration:underline;margin-left:10px;font-weight:800">Deshacer</button>');
 
 /* ===== Modales ===== */
 const modal=(t,b)=>{$('#mt').textContent=t;$('#mb').innerHTML=b;$('#modal').classList.remove('hidden')};
@@ -104,21 +110,238 @@ function newAcc(){
     S.accounts.push({id:uid(),name:o.name.trim(),bal:r2(+o.bal)});save();closeM();render();toast('Cuenta creada')});
 }
 function delAcc(id){if(confirm('¿Eliminar esta cuenta? Sus movimientos se conservan en el historial.')){S.accounts=S.accounts.filter(a=>a.id!=id);save();render()}}
+function delTx(id){
+  const t=S.tx.find(x=>x.id==id);if(!t)return;
+  if(!confirm('¿Eliminar este movimiento? Se revertirá el saldo de la cuenta'+(t.ref?' y el progreso relacionado':'')+'.'))return;
+  const a=S.accounts.find(x=>x.id==t.acc);
+  if(a)a.bal=r2(a.bal-(t.type=='i'?t.amt:-t.amt));
+  if(t.ref&&t.ref.kind=='debt'){const d=S.debts.find(x=>x.id==t.ref.id);if(d)d.paid=r2(Math.max(0,d.paid-t.amt))}
+  if(t.ref&&t.ref.kind=='rec'){const r=S.rec.find(x=>x.id==t.ref.id);if(r)r.paid=r.paid.filter(dt=>dt!=t.ref.date)}
+  S.tx=S.tx.filter(x=>x.id!=id);save();render();toast('Movimiento eliminado');
+}
 
 /* ===== Transacciones ===== */
+const CATS={i:['Sueldo','Ventas','Otros ingresos'],g:['Comida','Transporte','Hogar','Servicios','Salud','Ocio','Deuda','Recurrente','Otros gastos']};
 function addTx(type){
   if(needAcc())return;
-  const cats=type=='i'?['Sueldo','Ventas','Otros ingresos']:['Comida','Transporte','Hogar','Servicios','Salud','Ocio','Otros gastos'];
   fm(type=='i'?'Nuevo ingreso':'Nuevo gasto',[
     {n:'amt',l:'Monto',t:'number',step:'0.01',min:'0.01'},
     {n:'acc',l:'Cuenta',t:'select',o:accOpts()},
-    {n:'cat',l:'Categoría',t:'select',o:cats.map(c=>[c,c])},
+    {n:'cat',l:'Categoría',t:'select',o:CATS[type].map(c=>[c,c])},
     {n:'desc',l:'Descripción (opcional)',opt:true},
     {n:'date',l:'Fecha',t:'date',v:today()}],'Guardar',o=>{
     const a=S.accounts.find(x=>x.id==o.acc),m=r2(+o.amt);
     a.bal=r2(a.bal+(type=='i'?m:-m));   // suma o resta a la cuenta elegida
     const t={id:uid(),type,amt:m,acc:a.id,cat:o.cat,desc:o.desc,date:o.date};
     S.tx.unshift(t);save();flashId=t.id;closeM();go('resumen');setTimeout(()=>flashId=null,2000)});
+}
+
+/* ===== Registro por voz =====
+   Usa el reconocimiento de voz del navegador (Web Speech API, disponible en Chrome/Android;
+   no soportado en Safari/iOS). El texto se interpreta con un analizador de palabras clave en
+   español: detecta si fue ingreso o gasto, el monto, la categoría y la cuenta mencionadas.
+   SIEMPRE se muestra una confirmación editable antes de guardar, para que una transcripción
+   imperfecta nunca registre un movimiento equivocado. */
+const norm_=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+const NUM_WORDS={cero:0,un:1,uno:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,
+  once:11,doce:12,trece:13,catorce:14,quince:15,dieciseis:16,diecisiete:17,dieciocho:18,diecinueve:19,
+  veinte:20,veintiuno:21,veintidos:22,veintitres:23,veinticuatro:24,veinticinco:25,veintiseis:26,veintisiete:27,veintiocho:28,veintinueve:29,
+  treinta:30,cuarenta:40,cincuenta:50,sesenta:60,setenta:70,ochenta:80,noventa:90,
+  cien:100,ciento:100,doscientos:200,doscientas:200,trescientos:300,trescientas:300,cuatrocientos:400,cuatrocientas:400,
+  quinientos:500,quinientas:500,seiscientos:600,seiscientas:600,setecientos:700,setecientas:700,ochocientos:800,ochocientas:800,novecientos:900,novecientas:900};
+function wordsToNumber(normText){
+  // "un/una/uno" solos casi siempre son el artículo ("un abono"), no una cantidad; se ignoran si
+  // son la única palabra numérica de la frase, para no inventar un monto de $1.
+  let total=0,current=0,found=false,count=0,onlyArticle=false;
+  for(const tok of normText.split(/\s+/)){
+    if(tok=='mil'){current=current||1;total+=current*1000;current=0;found=true;count++;onlyArticle=false;continue}
+    if(tok=='y'||tok=='pesos'||tok=='peso'||tok=='dolares'||tok=='dolar')continue;
+    if(NUM_WORDS[tok]!==undefined){
+      current+=NUM_WORDS[tok];found=true;count++;
+      onlyArticle=(count==1&&(tok=='un'||tok=='una'||tok=='uno'));
+    }
+  }
+  total+=current;
+  if(found&&count==1&&onlyArticle)return null;
+  return found?total:null;
+}
+// Palabras sueltas (se buscan como palabra completa, no como substring, para evitar falsos positivos)
+const EXP_W=['gaste','gasto','gastado','gastando','pague','pago','pagado','pagando','pagar','compre','compra','comprado','comprando','comprar',
+  'sali','salida','debo','deudo','renta','abone','abono','transferi','transferencia','retire','retiro','saque'];
+const INC_W=['gane','gano','ganado','ganando','ingreso','ingrese','cobre','cobro','cobrado','cobrando','recibi','recibo','recibido','recibiendo',
+  'entro','entrada','vendi','venta','vendiendo','deposito','depositaron','depositado','regalaron','regalo','presto','prestaron','devolvieron','reembolso'];
+// Frases que indican con certeza que ALGUIEN LE PAGÓ AL USUARIO (ingreso), aunque contengan la raíz "pagar"
+const INC_PHRASES=[/\bme\s+(ya\s+)?(pagaron|pago|pagaba|pagan)\b/,/\ble\s+pagaron\s+a\s+mi\b/,/\bme\s+(dieron|dio|transfirieron|transfirio|deposito|depositaron|abonaron|ingresaron|regalaron|regalo)\b/,
+  /\bya\s+me\s+pagaron\b/,/\bme\s+debian\b.*\b(pago|pagaron)\b/];
+// Frases que indican con certeza que EL USUARIO PAGÓ/GASTÓ (gasto)
+const EXP_PHRASES=[/\byo\s+pague\b/,/\ble\s+pague\s+a\b/,/\bpague\s+(por|la|el|los|las|mi|de)\b/];
+// Busca el nombre de una cuenta existente en cualquier parte de la frase
+// ("en efectivo", "de la cuenta Banorte", "con mi tarjeta Banco", etc.)
+// Busca por nombre dentro de una lista (cuentas, deudas o pagos recurrentes) en cualquier parte de la frase
+function matchByName(n,list){
+  let best=null,bestLen=0;
+  for(const x of list){
+    const xn=norm_(x.name);
+    if(xn.length>1&&n.includes(xn)&&xn.length>bestLen){best=x;bestLen=xn.length}
+  }
+  if(best)return best;
+  for(const x of list){
+    const toks=norm_(x.name).split(/\s+/).filter(w=>w.length>2);
+    if(toks.some(w=>new RegExp('(^|\\s)'+w+'(\\s|$)').test(n)))return x;
+  }
+  return null;
+}
+const matchAccount=n=>matchByName(n,S.accounts);
+const ABONO_W=['abono','abone','abonar','abonando'];
+function parseVoice(raw){
+  const n=norm_(raw);
+  let type=null;
+  // 1) frases inequívocas primero (resuelven casos como "me pagaron" = ingreso, aunque lleve la raíz "pagar")
+  if(INC_PHRASES.some(re=>re.test(n)))type='i';
+  else if(EXP_PHRASES.some(re=>re.test(n)))type='g';
+  // 2) si no hubo frase clara, buscar palabras sueltas como palabra completa (no substring)
+  else{
+    const hasW=list=>list.some(w=>new RegExp('(^|\\s)'+w+'(\\s|$)').test(n));
+    if(hasW(EXP_W))type='g';
+    else if(hasW(INC_W))type='i';
+  }
+  const mNum=raw.match(/(\d[\d.,]*)/);
+  let amt=mNum?parseFloat(mNum[1].replace(/\.(?=\d{3}\b)/g,'').replace(',','.')):wordsToNumber(n);
+  const acc=matchAccount(n);
+  const debt=matchByName(n,S.debts);
+  const rec=matchByName(n,S.rec);
+  let catWord=null;
+  const catM=n.match(/\ben\s+([a-z]+)/);
+  const STOP=['cuenta','mi','la','el','los','las','de','del','su','una','un'];
+  if(catM&&!STOP.includes(catM[1])&&!(acc&&norm_(acc.name).includes(catM[1].trim())))catWord=catM[1].trim();
+  return{raw,type,amt,catWord,acc,debt,rec};
+}
+function startVoice(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){toast('Tu navegador no soporta dictado por voz. Pruébalo en Chrome para Android.');return}
+  if(needAcc())return;
+  const btn=$('#btnMic');
+  let rec;try{rec=new SR()}catch(e){toast('No se pudo iniciar el micrófono');return}
+  rec.lang='es-MX';rec.interimResults=false;rec.maxAlternatives=1;
+  btn.classList.add('mic-on');toast('Escuchando… “gasté 250 en comida”, “tengo que comprar cebolla” o “anota junta el viernes”');
+  rec.onresult=e=>{voiceDispatch(e.results[0][0].transcript)};
+  rec.onerror=e=>{toast(e.error=='not-allowed'||e.error=='service-not-allowed'?'Dale permiso de micrófono a esta página':e.error=='no-speech'?'No escuché nada, intenta de nuevo':'No se pudo reconocer el audio')};
+  rec.onend=()=>btn.classList.remove('mic-on');
+  try{rec.start()}catch(e){btn.classList.remove('mic-on')}
+}
+// Si el tipo, el monto y la cuenta quedaron claros, registra de una vez (sin pedir confirmación);
+// si falta algo, pide confirmación para no registrar algo equivocado.
+// Toma la frase tal cual, y si empieza con una de estas señales, devuelve lo que sigue (ya limpio).
+// Se usa texto SIN acentos para detectar la señal, pero se recorta del texto ORIGINAL para no perder tildes.
+function extractAfter(raw,n,re){
+  const m=n.match(re);if(!m)return null;
+  return raw.slice(m.index+m[0].length).replace(/^[\s,:]+/,'').trim();
+}
+const capitalize_=s=>s?s.charAt(0).toUpperCase()+s.slice(1):s;
+const NOTE_RE=/\b(anotame|anota|apuntame|apunta|nueva nota|recuerdame anotar)\b\s*(que\b)?/;
+const TASK_RE=/\b(tengo que|hay que|necesito|no se me olvide|no olvidar|recuerdame que)\b\s*/;
+function addTodoVoice(text){
+  const t={id:uid(),t:capitalize_(text),date:'',done:false};
+  S.todos.unshift(t);save();if(view=='tareas')render();
+  toastAction('Tarea agregada: "'+esc(t.t)+'"','<button onclick="delTodo(\''+t.id+'\');$(\'#toast\').classList.add(\'hidden\')" style="text-decoration:underline;margin-left:10px;font-weight:800">Deshacer</button>');
+}
+function addNoteVoice(text){
+  const nt={id:uid(),t:capitalize_(text),date:today()};
+  S.notes.unshift(nt);save();if(view=='tareas')render();
+  toastAction('Nota guardada: "'+esc(nt.t)+'"','<button onclick="delNote(\''+nt.id+'\');$(\'#toast\').classList.add(\'hidden\')" style="text-decoration:underline;margin-left:10px;font-weight:800">Deshacer</button>');
+}
+// Decide si lo dictado es una nota, una tarea, o un movimiento financiero (en ese orden de prioridad)
+function voiceDispatch(raw){
+  const n=norm_(raw);
+  const noteTxt=extractAfter(raw,n,NOTE_RE);
+  if(noteTxt!=null){if(noteTxt)addNoteVoice(noteTxt);else toast('Dime qué anotar, por ejemplo “anota junta el viernes”');return}
+  const taskTxt=extractAfter(raw,n,TASK_RE);
+  if(taskTxt!=null){if(taskTxt)addTodoVoice(taskTxt);else toast('Dime qué tarea, por ejemplo “tengo que comprar cebolla”');return}
+  voiceProcess(parseVoice(raw));
+}
+function voiceProcess(v){
+  if(needAcc())return;
+  // "ingreso/me pagaron" nunca se interpreta como abono o pago de algo que el usuario debe
+  if(v.debt&&v.type!='i')return voiceDebtPay(v);
+  if(v.rec&&v.type!='i')return voiceRecPay(v);
+  const acc=v.acc||(S.accounts.length==1?S.accounts[0]:null);
+  if(v.type&&v.amt!=null&&acc){
+    const type=v.type,m=r2(v.amt);
+    const cat=CATS[type].find(c=>v.catWord&&(norm_(c).includes(v.catWord)||v.catWord.includes(norm_(c))))||CATS[type][CATS[type].length-1];
+    acc.bal=r2(acc.bal+(type=='i'?m:-m));
+    const t={id:uid(),type,amt:m,acc:acc.id,cat,desc:v.raw,date:today()};
+    S.tx.unshift(t);save();flashId=t.id;go('resumen');setTimeout(()=>flashId=null,2000);
+    toastUndo((type=='i'?'Ingreso':'Gasto')+' de '+money(m)+' en '+acc.name+' registrado',t.id);
+  }else{
+    voiceConfirm(v);
+  }
+}
+// Abono a una deuda mencionada por voz. El monto del abono debe quedar claro (si no se dijo, se pide confirmar,
+// porque a diferencia de un pago recurrente, el abono a una deuda puede ser parcial y variar cada vez).
+function voiceDebtPay(v){
+  const d=v.debt,i=dInfo(d);
+  if(!i.rem){toast('La deuda "'+d.name+'" ya está saldada');return}
+  const acc=v.acc||(S.accounts.length==1?S.accounts[0]:null);
+  const amt=v.amt!=null?r2(Math.min(v.amt,i.rem)):null;
+  if(acc&&amt!=null){
+    acc.bal=r2(acc.bal-amt);d.paid=r2(d.paid+amt);
+    const t={id:uid(),type:'g',amt,acc:acc.id,cat:'Deuda',desc:'Abono (voz): '+d.name,date:today(),ref:{kind:'debt',id:d.id}};
+    S.tx.unshift(t);save();flashId=t.id;go('resumen');setTimeout(()=>flashId=null,2000);
+    toastUndo('Abono de '+money(amt)+' a "'+d.name+'" registrado',t.id);
+  }else{
+    fm('Confirmar abono a '+d.name,[
+      {n:'amt',l:'Monto del abono',t:'number',step:'0.01',min:'0.01',v:(amt!=null?amt:Math.min(d.fee,i.rem)).toFixed(2)},
+      {n:'acc',l:'Pagar desde la cuenta',t:'select',o:accOpts()},
+      {n:'date',l:'Fecha',t:'date',v:today()}],'Registrar abono',o=>{
+      const a=S.accounts.find(x=>x.id==o.acc),m=Math.min(r2(+o.amt),i.rem);
+      a.bal=r2(a.bal-m);d.paid=r2(d.paid+m);
+      S.tx.unshift({id:uid(),type:'g',amt:m,acc:a.id,cat:'Deuda',desc:'Abono (voz): '+d.name,date:o.date,ref:{kind:'debt',id:d.id}});
+      save();closeM();render();toast('Abono registrado')});
+  }
+}
+// Pago de un pago recurrente mencionado por voz. El monto ya es conocido (el que se definió al crearlo),
+// así que basta con saber la cuenta para registrarlo solo.
+function voiceRecPay(v){
+  const r=v.rec,due=nextDue(r);
+  if(!due){toast('"'+r.name+'" no tiene pagos pendientes');return}
+  const acc=v.acc||(S.accounts.length==1?S.accounts[0]:null);
+  const amt=v.amt!=null?r2(v.amt):r.amt;
+  if(acc){
+    acc.bal=r2(acc.bal-amt);const fecha=fd(due);r.paid.push(fecha);
+    const t={id:uid(),type:'g',amt,acc:acc.id,cat:'Recurrente',desc:'Pago (voz): '+r.name,date:today(),ref:{kind:'rec',id:r.id,date:fecha}};
+    S.tx.unshift(t);save();flashId=t.id;go('resumen');setTimeout(()=>flashId=null,2000);
+    toastUndo('Pago de '+money(amt)+' ("'+r.name+'") registrado',t.id);
+  }else{
+    fm('Confirmar pago de '+r.name+' ('+fmtD(due)+')',[
+      {n:'amt',l:'Monto',t:'number',step:'0.01',min:'0.01',v:amt.toFixed(2)},
+      {n:'acc',l:'Pagar desde la cuenta',t:'select',o:accOpts()}],'Registrar pago',o=>{
+      const a=S.accounts.find(x=>x.id==o.acc),m=r2(+o.amt),fecha=fd(due);
+      a.bal=r2(a.bal-m);r.paid.push(fecha);
+      S.tx.unshift({id:uid(),type:'g',amt:m,acc:a.id,cat:'Recurrente',desc:'Pago (voz): '+r.name,date:today(),ref:{kind:'rec',id:r.id,date:fecha}});
+      save();closeM();render();toast('Pago registrado')});
+  }
+}
+function voiceConfirm(v){
+  const type=v.type||'g';
+  const cat=CATS[type].find(c=>v.catWord&&(norm_(c).includes(v.catWord)||v.catWord.includes(norm_(c))))||CATS[type][CATS[type].length-1];
+  const acc=v.acc||S.accounts[0];
+  modal('Confirma el movimiento por voz',`<div class="vtxt"><i class="fa-solid fa-quote-left mr-1"></i>${esc(v.raw)}</div>
+    ${!v.type?'<div class="vtxt" style="color:#facc15;border-color:#facc15"><i class="fa-solid fa-triangle-exclamation mr-1"></i>No distinguí si fue ingreso o gasto, revísalo abajo.</div>':''}
+    ${v.amt==null?'<div class="vtxt" style="color:#facc15;border-color:#facc15"><i class="fa-solid fa-triangle-exclamation mr-1"></i>No distinguí el monto, captúralo abajo.</div>':''}
+    <form id="mf">
+    <label class="block mb-3 text-sm">Tipo<select name="type" id="vType" class="inp" onchange="document.getElementById('vCat').innerHTML=CATS[this.value].map(c=>'<option>'+c+'</option>').join('')">
+      <option value="g" ${type=='g'?'selected':''}>Gasto</option><option value="i" ${type=='i'?'selected':''}>Ingreso</option></select></label>
+    <label class="block mb-3 text-sm">Monto<input name="amt" type="number" step="0.01" min="0.01" value="${v.amt!=null?r2(v.amt):''}" class="inp" required></label>
+    <label class="block mb-3 text-sm">Cuenta<select name="acc" class="inp">${S.accounts.map(a=>`<option value="${a.id}" ${acc&&acc.id==a.id?'selected':''}>${esc(a.name)} (${money(a.bal)})</option>`).join('')}</select></label>
+    <label class="block mb-3 text-sm">Categoría<select name="cat" id="vCat" class="inp">${CATS[type].map(c=>`<option ${c==cat?'selected':''}>${c}</option>`).join('')}</select></label>
+    <label class="block mb-3 text-sm">Descripción<input name="desc" value="${esc(v.raw)}" class="inp"></label>
+    <label class="block mb-3 text-sm">Fecha<input name="date" type="date" value="${today()}" class="inp"></label>
+    <button class="btn w-full mt-2">Guardar movimiento</button></form>`);
+  $('#mf').onsubmit=e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));
+    const a=S.accounts.find(x=>x.id==o.acc),m=r2(+o.amt);
+    a.bal=r2(a.bal+(o.type=='i'?m:-m));
+    const t={id:uid(),type:o.type,amt:m,acc:a.id,cat:o.cat,desc:o.desc,date:o.date};
+    S.tx.unshift(t);save();flashId=t.id;closeM();go('resumen');setTimeout(()=>flashId=null,2000);toast('Movimiento guardado por voz')};
 }
 
 /* ===== Deudas: cronograma calculado ===== */
@@ -156,7 +379,7 @@ function payDebt(id){
     {n:'acc',l:'Pagar desde la cuenta',t:'select',o:accOpts()},{n:'date',l:'Fecha',t:'date',v:today()}],'Registrar abono',o=>{
     const a=S.accounts.find(x=>x.id==o.acc),m=Math.min(r2(+o.amt),i.rem);
     a.bal=r2(a.bal-m);d.paid=r2(d.paid+m);
-    S.tx.unshift({id:uid(),type:'g',amt:m,acc:a.id,cat:'Deuda',desc:'Abono: '+d.name,date:o.date});
+    S.tx.unshift({id:uid(),type:'g',amt:m,acc:a.id,cat:'Deuda',desc:'Abono: '+d.name,date:o.date,ref:{kind:'debt',id:d.id}});
     save();closeM();render();toast('Abono registrado')});
 }
 function delDebt(id){if(confirm('¿Eliminar esta deuda?')){S.debts=S.debts.filter(d=>d.id!=id);save();closeM();render()}}
@@ -184,8 +407,8 @@ function payRec(id){
   if(needAcc())return;
   const r=S.rec.find(x=>x.id==id),d=nextDue(r);
   fm('Pagar '+r.name+' ('+fmtD(d)+')',[{n:'acc',l:'Pagar desde la cuenta',t:'select',o:accOpts()}],'Pagar '+money(r.amt),o=>{
-    const a=S.accounts.find(x=>x.id==o.acc);a.bal=r2(a.bal-r.amt);r.paid.push(fd(d));
-    S.tx.unshift({id:uid(),type:'g',amt:r.amt,acc:a.id,cat:'Recurrente',desc:r.name,date:today()});
+    const a=S.accounts.find(x=>x.id==o.acc);a.bal=r2(a.bal-r.amt);const fecha=fd(d);r.paid.push(fecha);
+    S.tx.unshift({id:uid(),type:'g',amt:r.amt,acc:a.id,cat:'Recurrente',desc:r.name,date:today(),ref:{kind:'rec',id:r.id,date:fecha}});
     save();closeM();render();toast('Pago registrado')});
 }
 function delRec(id){if(confirm('¿Eliminar este pago recurrente?')){S.rec=S.rec.filter(r=>r.id!=id);save();render()}}
@@ -228,7 +451,7 @@ V.resumen=()=>{
   <h3 class="font-semibold mb-2">Historial de movimientos</h3><div class="card">`+
   (list.map(t=>{const a=S.accounts.find(x=>x.id==t.acc);
     return `<div class="row ${t.id==flashId?'flash':''}"><div><div class="font-medium">${esc(t.desc||t.cat)}</div><div class="text-xs opacity-70">${t.cat} · ${a?esc(a.name):'Cuenta eliminada'} · ${fmtD(pd(t.date))}</div></div>
-    <b class="${t.type=='i'?'text-green-400':'text-red-400'}">${t.type=='i'?'+':'-'}${money(t.amt)}</b></div>`}).join('')||empty_('Aún no hay movimientos. Usa Ingreso o Gasto para registrar el primero.'))+`</div>`;
+    <div class="flex items-center gap-3"><b class="${t.type=='i'?'text-green-400':'text-red-400'}">${t.type=='i'?'+':'-'}${money(t.amt)}</b><button class="text-red-400" onclick="delTx('${t.id}')" aria-label="Eliminar movimiento"><i class="fa-solid fa-trash"></i></button></div></div>`}).join('')||empty_('Aún no hay movimientos. Usa Ingreso o Gasto para registrar el primero.'))+`</div>`;
 };
 
 V.cuentas=()=>head('Cuentas',`<button class="btn" id="btnNewAcc" onclick="newAcc()"><i class="fa-solid fa-plus"></i> Nueva Cuenta</button>`)+
@@ -284,7 +507,7 @@ V.calendario=()=>{
     <div class="flex justify-between text-sm mt-3 pt-3 border-t border-white/10"><span>Ingresos del mes <b class="text-green-400">${money(mm('i'))}</b></span><span>Gastos <b class="text-red-400">${money(mm('g'))}</b></span></div></div>
   <div class="card"><div class="font-bold text-lg mb-3 capitalize">${pd(calSel).toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
     <div class="text-xs text-slate-400 mb-1">Vencimientos</div>${se.map(e=>`<div class="row text-sm"><span>${esc(e.label)}</span><span class="${cn[e.st]}">${money(e.amt)} · ${lb[e.st]}</span></div>`).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
-    <div class="text-xs text-slate-400 mt-3 mb-1">Movimientos registrados</div>${sx.map(x=>{const a=S.accounts.find(c=>c.id==x.acc);return `<div class="row text-sm"><div><b>${kind(x)}</b> · ${esc(x.desc||x.cat)}<div class="text-xs opacity-60">${a?esc(a.name):'Cuenta eliminada'} · ${x.cat}</div></div><b class="${x.type=='i'?'text-green-400':'text-red-400'}">${x.type=='i'?'+':'-'}${money(x.amt)}</b></div>`}).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
+    <div class="text-xs text-slate-400 mt-3 mb-1">Movimientos registrados</div>${sx.map(x=>{const a=S.accounts.find(c=>c.id==x.acc);return `<div class="row text-sm"><div><b>${kind(x)}</b> · ${esc(x.desc||x.cat)}<div class="text-xs opacity-60">${a?esc(a.name):'Cuenta eliminada'} · ${x.cat}</div></div><div class="flex items-center gap-2"><b class="${x.type=='i'?'text-green-400':'text-red-400'}">${x.type=='i'?'+':'-'}${money(x.amt)}</b><button class="text-red-400" onclick="delTx('${x.id}')" aria-label="Eliminar movimiento"><i class="fa-solid fa-trash"></i></button></div></div>`}).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
     <div class="text-xs text-slate-400 mt-3 mb-1">Tareas</div>${sk.map(t=>`<div class="row text-sm ${t.done?'line-through opacity-50':''}"><span><i class="fa-solid fa-list-check ac"></i> ${esc(t.t)}</span></div>`).join('')||'<p class="text-sm text-slate-500">Ninguna</p>'}</div></div>`;
 };
 const calMove=k=>{calD=new Date(calD.getFullYear(),calD.getMonth()+k,1);calSel=fd(calD).slice(0,7)==today().slice(0,7)?today():fd(calD);render()};
@@ -309,7 +532,7 @@ const addNote=e=>{e.preventDefault();S.notes.unshift({id:uid(),t:$('#nt').value.
 const delNote=id=>{S.notes=S.notes.filter(x=>x.id!=id);save();render()};
 
 V.config=()=>{
-  const cols=['#d4af6a','#5eead4','#a78bfa','#7dd3fc','#fb7185','#39ff14'],bgs=['#07090f','#000000','#0d0a14','#08120f','#111318'];
+  const cols=['#d4af6a','#b3465c','#5b7c99','#9a9d9f','#b8a07a','#4f7a6b'],bgs=['#07090f','#000000','#0d0a14','#08120f','#111318'];
   const sw=(c,fn,cur)=>`<button onclick="${fn}('${c}')" class="w-10 h-10 rounded-full border-2 ${cur==c?'border-white':'border-white/20'}" style="background:${c}" aria-label="${c}"></button>`;
   return head('Configuración')+`<div class="card mb-4"><div class="font-semibold mb-2">Color de acento</div><div class="flex gap-3 flex-wrap">${cols.map(c=>sw(c,'setTheme',S.theme)).join('')}</div>
     <div class="font-semibold mt-4 mb-2">Color de fondo</div><div class="flex gap-3 flex-wrap">${bgs.map(c=>sw(c,'setBg',S.bg)).join('')}</div>
