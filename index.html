@@ -84,7 +84,6 @@ const pd=s=>{const[a,b,c]=s.split('-');return new Date(+a,+b-1,+c)};
 const T0=()=>{const d=new Date();return new Date(d.getFullYear(),d.getMonth(),d.getDate())};
 const today=()=>fd(T0());
 const fmtD=d=>d.toLocaleDateString('es-MX',{day:'2-digit',month:'short',year:'numeric'});
-// Suma k meses a una fecha fijando el día (ajustado al fin de mes si hace falta)
 const addM=(date,k,day)=>{const t=new Date(date.getFullYear(),date.getMonth()+k,1);const dim=new Date(t.getFullYear(),t.getMonth()+1,0).getDate();t.setDate(Math.min(day,dim));return t};
 const toast=m=>{const t=$('#toast');t.innerHTML='';t.textContent=m;t.classList.remove('hidden');clearTimeout(window._toastT);window._toastT=setTimeout(()=>t.classList.add('hidden'),2200)};
 const toastAction=(m,html)=>{const t=$('#toast');t.innerHTML=esc(m)+' '+html;t.classList.remove('hidden');clearTimeout(window._toastT);window._toastT=setTimeout(()=>t.classList.add('hidden'),6000)};
@@ -93,7 +92,6 @@ const toastUndo=(m,id)=>toastAction(m,'<button onclick="delTx(\''+id+'\');$(\'#t
 /* ===== Modales ===== */
 const modal=(t,b)=>{$('#mt').textContent=t;$('#mb').innerHTML=b;$('#modal').classList.remove('hidden')};
 const closeM=()=>$('#modal').classList.add('hidden');
-// Formulario genérico: fields=[{n,l,t,v,o,step,min,opt}]
 function fm(title,fields,btn,cb){
   const h=fields.map(f=>`<label class="block mb-3 text-sm">${f.l}`+(f.t=='select'
     ?`<select name="${f.n}" class="inp" required>${f.o.map(o=>`<option value="${o[0]}">${esc(o[1])}</option>`).join('')}</select>`
@@ -131,17 +129,12 @@ function addTx(type){
     {n:'desc',l:'Descripción (opcional)',opt:true},
     {n:'date',l:'Fecha',t:'date',v:today()}],'Guardar',o=>{
     const a=S.accounts.find(x=>x.id==o.acc),m=r2(+o.amt);
-    a.bal=r2(a.bal+(type=='i'?m:-m));   // suma o resta a la cuenta elegida
+    a.bal=r2(a.bal+(type=='i'?m:-m));
     const t={id:uid(),type,amt:m,acc:a.id,cat:o.cat,desc:o.desc,date:o.date};
     S.tx.unshift(t);save();flashId=t.id;closeM();go('resumen');setTimeout(()=>flashId=null,2000)});
 }
 
-/* ===== Registro por voz =====
-   Usa el reconocimiento de voz del navegador (Web Speech API, disponible en Chrome/Android;
-   no soportado en Safari/iOS). El texto se interpreta con un analizador de palabras clave en
-   español: detecta si fue ingreso o gasto, el monto, la categoría y la cuenta mencionadas.
-   SIEMPRE se muestra una confirmación editable antes de guardar, para que una transcripción
-   imperfecta nunca registre un movimiento equivocado. */
+/* ===== Registro por voz (Compatible con iOS y navegadores modernos)[cite: 1] ===== */
 const norm_=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
 const NUM_WORDS={cero:0,un:1,uno:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,siete:7,ocho:8,nueve:9,diez:10,
   once:11,doce:12,trece:13,catorce:14,quince:15,dieciseis:16,diecisiete:17,dieciocho:18,diecinueve:19,
@@ -150,8 +143,6 @@ const NUM_WORDS={cero:0,un:1,uno:1,una:1,dos:2,tres:3,cuatro:4,cinco:5,seis:6,si
   cien:100,ciento:100,doscientos:200,doscientas:200,trescientos:300,trescientas:300,cuatrocientos:400,cuatrocientas:400,
   quinientos:500,quinientas:500,seiscientos:600,seiscientas:600,setecientos:700,setecientas:700,ochocientos:800,ochocientas:800,novecientos:900,novecientas:900};
 function wordsToNumber(normText){
-  // "un/una/uno" solos casi siempre son el artículo ("un abono"), no una cantidad; se ignoran si
-  // son la única palabra numérica de la frase, para no inventar un monto de $1.
   let total=0,current=0,found=false,count=0,onlyArticle=false;
   for(const tok of normText.split(/\s+/)){
     if(tok=='mil'){current=current||1;total+=current*1000;current=0;found=true;count++;onlyArticle=false;continue}
@@ -165,19 +156,14 @@ function wordsToNumber(normText){
   if(found&&count==1&&onlyArticle)return null;
   return found?total:null;
 }
-// Palabras sueltas (se buscan como palabra completa, no como substring, para evitar falsos positivos)
 const EXP_W=['gaste','gasto','gastado','gastando','pague','pago','pagado','pagando','pagar','compre','compra','comprado','comprando','comprar',
   'sali','salida','debo','deudo','renta','abone','abono','transferi','transferencia','retire','retiro','saque'];
 const INC_W=['gane','gano','ganado','ganando','ingreso','ingrese','cobre','cobro','cobrado','cobrando','recibi','recibo','recibido','recibiendo',
   'entro','entrada','vendi','venta','vendiendo','deposito','depositaron','depositado','regalaron','regalo','presto','prestaron','devolvieron','reembolso'];
-// Frases que indican con certeza que ALGUIEN LE PAGÓ AL USUARIO (ingreso), aunque contengan la raíz "pagar"
 const INC_PHRASES=[/\bme\s+(ya\s+)?(pagaron|pago|pagaba|pagan)\b/,/\ble\s+pagaron\s+a\s+mi\b/,/\bme\s+(dieron|dio|transfirieron|transfirio|deposito|depositaron|abonaron|ingresaron|regalaron|regalo)\b/,
   /\bya\s+me\s+pagaron\b/,/\bme\s+debian\b.*\b(pago|pagaron)\b/];
-// Frases que indican con certeza que EL USUARIO PAGÓ/GASTÓ (gasto)
 const EXP_PHRASES=[/\byo\s+pague\b/,/\ble\s+pague\s+a\b/,/\bpague\s+(por|la|el|los|las|mi|de)\b/];
-// Busca el nombre de una cuenta existente en cualquier parte de la frase
-// ("en efectivo", "de la cuenta Banorte", "con mi tarjeta Banco", etc.)
-// Busca por nombre dentro de una lista (cuentas, deudas o pagos recurrentes) en cualquier parte de la frase
+
 function matchByName(n,list){
   let best=null,bestLen=0;
   for(const x of list){
@@ -196,10 +182,8 @@ const ABONO_W=['abono','abone','abonar','abonando'];
 function parseVoice(raw){
   const n=norm_(raw);
   let type=null;
-  // 1) frases inequívocas primero (resuelven casos como "me pagaron" = ingreso, aunque lleve la raíz "pagar")
   if(INC_PHRASES.some(re=>re.test(n)))type='i';
   else if(EXP_PHRASES.some(re=>re.test(n)))type='g';
-  // 2) si no hubo frase clara, buscar palabras sueltas como palabra completa (no substring)
   else{
     const hasW=list=>list.some(w=>new RegExp('(^|\\s)'+w+'(\\s|$)').test(n));
     if(hasW(EXP_W))type='g';
@@ -216,27 +200,68 @@ function parseVoice(raw){
   if(catM&&!STOP.includes(catM[1])&&!(acc&&norm_(acc.name).includes(catM[1].trim())))catWord=catM[1].trim();
   return{raw,type,amt,catWord,acc,debt,rec};
 }
-function startVoice(){
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){toast('Tu navegador no soporta dictado por voz. Pruébalo en Chrome para Android.');return}
-  if(needAcc())return;
-  const btn=$('#btnMic');
-  let rec;try{rec=new SR()}catch(e){toast('No se pudo iniciar el micrófono');return}
-  rec.lang='es-MX';rec.interimResults=false;rec.maxAlternatives=1;
-  btn.classList.add('mic-on');toast('Escuchando… “gasté 250 en comida”, “tengo que comprar cebolla” o “anota junta el viernes”');
-  rec.onresult=e=>{voiceDispatch(e.results[0][0].transcript)};
-  rec.onerror=e=>{toast(e.error=='not-allowed'||e.error=='service-not-allowed'?'Dale permiso de micrófono a esta página':e.error=='no-speech'?'No escuché nada, intenta de nuevo':'No se pudo reconocer el audio')};
-  rec.onend=()=>btn.classList.remove('mic-on');
-  try{rec.start()}catch(e){btn.classList.remove('mic-on')}
+
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  
+  if (SR) {
+    let rec;
+    try {
+      rec = new SR();
+      rec.lang = 'es-MX';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      
+      const btn = $('#btnMic');
+      btn.classList.add('mic-on');
+      toast('Escuchando… “gasté 250 en comida”');
+
+      rec.onresult = e => { 
+        voiceDispatch(e.results[0][0].transcript); 
+      };
+      rec.onerror = e => { 
+        toast('No se pudo reconocer el audio'); 
+        btn.classList.remove('mic-on');
+      };
+      rec.onend = () => btn.classList.remove('mic-on');
+      
+      rec.start();
+      return;
+    } catch(e) {
+      // Si falla la API nativa, procede a la alternativa para iOS[cite: 1]
+    }
+  }
+
+  // Alternativa compatible con iOS usando el teclado nativo de Apple[cite: 1]
+  modal('Dictado por voz (iOS)', `
+    <p class="text-sm text-slate-300 mb-3">
+      Toca el icono de micrófono <i class="fa-solid fa-microphone ac"></i> que aparece 
+      <strong>en tu teclado virtual</strong> y habla (ej. <i>"gasté 250 en comida"</i>):
+    </p>
+    <form id="iosVoiceForm">
+      <input id="iosVoiceInput" class="inp mb-3" placeholder="Dicta o escribe tu movimiento aquí..." autofocus autocomplete="off">
+      <button class="btn w-full">Procesar movimiento</button>
+    </form>
+  `);
+
+  setTimeout(() => {
+    const inp = $('#iosVoiceInput');
+    if (inp) inp.focus();
+  }, 100);
+
+  $('#iosVoiceForm').onsubmit = e => {
+    e.preventDefault();
+    const text = $('#iosVoiceInput').value.trim();
+    closeM();
+    if (text) {
+      voiceDispatch(text);
+    } else {
+      toast('No ingresaste ningún texto');
+    }
+  };
 }
-// Si el tipo, el monto y la cuenta quedaron claros, registra de una vez (sin pedir confirmación);
-// si falta algo, pide confirmación para no registrar algo equivocado.
-// Toma la frase tal cual, y si empieza con una de estas señales, devuelve lo que sigue (ya limpio).
-// Se usa texto SIN acentos para detectar la señal, pero se recorta del texto ORIGINAL para no perder tildes.
-function extractAfter(raw,n,re){
-  const m=n.match(re);if(!m)return null;
-  return raw.slice(m.index+m[0].length).replace(/^[\s,:]+/,'').trim();
-}
+
+const extractAfter=(raw,n,re)=>{const m=n.match(re);if(!m)return null;return raw.slice(m.index+m[0].length).replace(/^[\s,:]+/,'').trim();};
 const capitalize_=s=>s?s.charAt(0).toUpperCase()+s.slice(1):s;
 const NOTE_RE=/\b(anotame|anota|apuntame|apunta|nueva nota|recuerdame anotar)\b\s*(que\b)?/;
 const TASK_RE=/\b(tengo que|hay que|necesito|no se me olvide|no olvidar|recuerdame que)\b\s*/;
@@ -250,18 +275,16 @@ function addNoteVoice(text){
   S.notes.unshift(nt);save();if(view=='tareas')render();
   toastAction('Nota guardada: "'+esc(nt.t)+'"','<button onclick="delNote(\''+nt.id+'\');$(\'#toast\').classList.add(\'hidden\')" style="text-decoration:underline;margin-left:10px;font-weight:800">Deshacer</button>');
 }
-// Decide si lo dictado es una nota, una tarea, o un movimiento financiero (en ese orden de prioridad)
 function voiceDispatch(raw){
   const n=norm_(raw);
   const noteTxt=extractAfter(raw,n,NOTE_RE);
-  if(noteTxt!=null){if(noteTxt)addNoteVoice(noteTxt);else toast('Dime qué anotar, por ejemplo “anota junta el viernes”');return}
+  if(noteTxt!=null){if(noteTxt)addNoteVoice(noteTxt);else toast('Dime qué anotar');return}
   const taskTxt=extractAfter(raw,n,TASK_RE);
-  if(taskTxt!=null){if(taskTxt)addTodoVoice(taskTxt);else toast('Dime qué tarea, por ejemplo “tengo que comprar cebolla”');return}
+  if(taskTxt!=null){if(taskTxt)addTodoVoice(taskTxt);else toast('Dime qué tarea');return}
   voiceProcess(parseVoice(raw));
 }
 function voiceProcess(v){
   if(needAcc())return;
-  // "ingreso/me pagaron" nunca se interpreta como abono o pago de algo que el usuario debe
   if(v.debt&&v.type!='i')return voiceDebtPay(v);
   if(v.rec&&v.type!='i')return voiceRecPay(v);
   const acc=v.acc||(S.accounts.length==1?S.accounts[0]:null);
@@ -276,8 +299,6 @@ function voiceProcess(v){
     voiceConfirm(v);
   }
 }
-// Abono a una deuda mencionada por voz. El monto del abono debe quedar claro (si no se dijo, se pide confirmar,
-// porque a diferencia de un pago recurrente, el abono a una deuda puede ser parcial y variar cada vez).
 function voiceDebtPay(v){
   const d=v.debt,i=dInfo(d);
   if(!i.rem){toast('La deuda "'+d.name+'" ya está saldada');return}
@@ -299,8 +320,6 @@ function voiceDebtPay(v){
       save();closeM();render();toast('Abono registrado')});
   }
 }
-// Pago de un pago recurrente mencionado por voz. El monto ya es conocido (el que se definió al crearlo),
-// así que basta con saber la cuenta para registrarlo solo.
 function voiceRecPay(v){
   const r=v.rec,due=nextDue(r);
   if(!due){toast('"'+r.name+'" no tiene pagos pendientes');return}
@@ -344,7 +363,7 @@ function voiceConfirm(v){
     S.tx.unshift(t);save();flashId=t.id;closeM();go('resumen');setTimeout(()=>flashId=null,2000);toast('Movimiento guardado por voz')};
 }
 
-/* ===== Deudas: cronograma calculado ===== */
+/* ===== Deudas ===== */
 const dInfo=d=>{
   const n=Math.ceil(d.total/d.fee-1e-9),s=pd(d.start),off=d.day<s.getDate()?1:0;
   const sch=[...Array(n)].map((_,i)=>({i,date:addM(s,off+i,d.day),amt:i==n-1?r2(d.total-d.fee*(n-1)):d.fee}));
@@ -368,7 +387,7 @@ function openDebt(id){
     <div class="text-xs text-slate-400 mb-3">${pct.toFixed(0)}% pagado · cuota ${money(d.fee)} · ${i.pend.length} pagos faltantes</div>
     <button class="btn w-full mb-3" onclick="payDebt('${id}')">Registrar abono</button>
     <div class="font-semibold mb-1">Pagos faltantes</div>
-    <div class="max-h-56 overflow-auto">${i.pend.map(p=>`<div class="row text-sm"><span>Pago ${p.i+1} de ${i.n} · ${fmtD(p.date)}</span><b>${money(p.amt)}</b></div>`).join('')||'<p class="text-green-400 py-2">¡Deuda saldada!</p>'}</div>
+    <div class="max-h-56 overflow-auto">${i.pend.map(p=>`<div class="row text-sm"><span>Pago ${p.i+1} de${i.n} · ${fmtD(p.date)}</span><b>${money(p.amt)}</b></div>`).join('')||'<p class="text-green-400 py-2">¡Deuda saldada!</p>'}</div>
     <button class="text-red-400 text-sm mt-3" onclick="delDebt('${id}')">Eliminar deuda</button>`);
 }
 function payDebt(id){
@@ -391,7 +410,6 @@ function newRec(){
     {n:'freq',l:'Frecuencia',t:'select',o:FQ.map(f=>[f,f[0].toUpperCase()+f.slice(1)]),},{n:'start',l:'Primer pago',t:'date',v:today()}],'Guardar',o=>{
     S.rec.push({id:uid(),name:o.name.trim(),amt:r2(+o.amt),freq:o.freq,start:o.start,paid:[]});save();closeM();render()});
 }
-// Fechas de un pago recurrente desde su inicio hasta "to"
 function occ(r,to){
   const out=[],s=pd(r.start);
   for(let i=0;i<800;i++){
@@ -413,8 +431,7 @@ function payRec(id){
 }
 function delRec(id){if(confirm('¿Eliminar este pago recurrente?')){S.rec=S.rec.filter(r=>r.id!=id);save();render()}}
 
-/* ===== Eventos financieros (calendario y estatus) ===== */
-// st: r=vencido, y=próximo (≤7 días), g=pagado, b=futuro
+/* ===== Eventos financieros ===== */
 function events(to){
   const t=T0(),ev=[];
   const stt=(d,paid)=>paid?'g':d<t?'r':(d-t)/864e5<=7?'y':'b';
@@ -446,7 +463,7 @@ V.resumen=()=>{
     <div class="text-xl font-extrabold mt-1 ${over?'text-red-400':'text-green-400'}"><i class="fa-solid fa-circle text-sm"></i> ${over?'Con pendientes ('+over+')':'Al día'}</div>
     <div class="text-xs text-slate-500 mt-1">${over?'Hay pagos vencidos':'Sin pagos vencidos'}</div></div></div>
   <div class="grid md:grid-cols-2 gap-4 mb-4">
-    <div class="card"><h3 class="font-semibold mb-2">Próximos vencimientos</h3>${ev.slice(0,5).map(e=>`<div class="row text-sm"><span>${fmtD(e.date)} · ${esc(e.label)}</span><b class="${cn[e.st]}">${money(e.amt)}</b></div>`).join('')||empty_('Nada por vencer en 60 días.')}</div>
+    <div class="card"><h3 class="font-semibold mb-2">Próximos vencimientos</h3>${ev.slice(0,5).map(e=>`<div class="row text-sm"><span>${fmtD(e.date)} ·${esc(e.label)}</span><b class="${cn[e.st]}">${money(e.amt)}</b></div>`).join('')||empty_('Nada por vencer en 60 días.')}</div>
     <div class="card"><h3 class="font-semibold mb-3">Gastos por categoría (mes)</h3>${cl.map(([c,v])=>`<div class="mb-3"><div class="flex justify-between text-sm mb-1"><span>${c}</span><b>${money(v)}</b></div><div class="bar"><i style="width:${v/g*100}%"></i></div></div>`).join('')||empty_('Sin gastos este mes.')}</div></div>
   <h3 class="font-semibold mb-2">Historial de movimientos</h3><div class="card">`+
   (list.map(t=>{const a=S.accounts.find(x=>x.id==t.acc);
@@ -506,13 +523,12 @@ V.calendario=()=>{
     <div class="flex gap-x-4 gap-y-1 text-xs mt-3 flex-wrap"><span class="text-red-400">■ Vencido</span><span class="text-yellow-400">■ Próximo</span><span class="text-green-400">■ Pagado</span><span class="text-green-400">● Ingreso</span><span class="text-red-400">● Gasto</span><span class="ac">● Tarea</span></div>
     <div class="flex justify-between text-sm mt-3 pt-3 border-t border-white/10"><span>Ingresos del mes <b class="text-green-400">${money(mm('i'))}</b></span><span>Gastos <b class="text-red-400">${money(mm('g'))}</b></span></div></div>
   <div class="card"><div class="font-bold text-lg mb-3 capitalize">${pd(calSel).toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
-    <div class="text-xs text-slate-400 mb-1">Vencimientos</div>${se.map(e=>`<div class="row text-sm"><span>${esc(e.label)}</span><span class="${cn[e.st]}">${money(e.amt)} · ${lb[e.st]}</span></div>`).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
-    <div class="text-xs text-slate-400 mt-3 mb-1">Movimientos registrados</div>${sx.map(x=>{const a=S.accounts.find(c=>c.id==x.acc);return `<div class="row text-sm"><div><b>${kind(x)}</b> · ${esc(x.desc||x.cat)}<div class="text-xs opacity-60">${a?esc(a.name):'Cuenta eliminada'} · ${x.cat}</div></div><div class="flex items-center gap-2"><b class="${x.type=='i'?'text-green-400':'text-red-400'}">${x.type=='i'?'+':'-'}${money(x.amt)}</b><button class="text-red-400" onclick="delTx('${x.id}')" aria-label="Eliminar movimiento"><i class="fa-solid fa-trash"></i></button></div></div>`}).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
+    <div class="text-xs text-slate-400 mb-1">Vencimientos</div>${se.map(e=>`<div class="row text-sm"><span>${esc(e.label)}</span><span class="${cn[e.st]}">${money(e.amt)} ·${lb[e.st]}</span></div>`).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
+    <div class="text-xs text-slate-400 mt-3 mb-1">Movimientos registrados</div>${sx.map(x=>{const a=S.accounts.find(c=>c.id==x.acc);return `<div class="row text-sm"><div><b>${kind(x)}</b> ·${esc(x.desc||x.cat)}<div class="text-xs opacity-60">${a?esc(a.name):'Cuenta eliminada'} · ${x.cat}</div></div><div class="flex items-center gap-2"><b class="${x.type=='i'?'text-green-400':'text-red-400'}">${x.type=='i'?'+':'-'}${money(x.amt)}</b><button class="text-red-400" onclick="delTx('${x.id}')" aria-label="Eliminar movimiento"><i class="fa-solid fa-trash"></i></button></div></div>`}).join('')||'<p class="text-sm text-slate-500 mb-2">Ninguno</p>'}
     <div class="text-xs text-slate-400 mt-3 mb-1">Tareas</div>${sk.map(t=>`<div class="row text-sm ${t.done?'line-through opacity-50':''}"><span><i class="fa-solid fa-list-check ac"></i> ${esc(t.t)}</span></div>`).join('')||'<p class="text-sm text-slate-500">Ninguna</p>'}</div></div>`;
 };
 const calMove=k=>{calD=new Date(calD.getFullYear(),calD.getMonth()+k,1);calSel=fd(calD).slice(0,7)==today().slice(0,7)?today():fd(calD);render()};
 
-/* ===== Tareas y notas ===== */
 V.tareas=()=>{
   const pend=S.todos.filter(t=>!t.done).length;
   return head('Tareas y Notas')+`<div class="grid md:grid-cols-2 gap-4">
@@ -548,7 +564,6 @@ function applyTheme(){
 }
 const setTheme=c=>{S.theme=c;save();applyTheme();render()};
 const setBg=c=>{S.bg=c;save();applyTheme();render()};
-// Reduce la imagen a 1600px máx. para que quepa en localStorage
 function setImg(inp){
   const f=inp.files[0];if(!f)return;const im=new Image();
   im.onload=()=>{const k=Math.min(1,1600/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;
@@ -567,7 +582,7 @@ function resetAll(){
 /* ===== Navegación y render ===== */
 const NAV=[['resumen','Resumen','fa-chart-pie'],['cuentas','Cuentas','fa-wallet'],['deudas','Deudas','fa-file-invoice-dollar'],['recurrentes','Pagos Recurrentes','fa-rotate'],['rendimiento','Rendimiento Mensual','fa-chart-column'],['calendario','Calendario','fa-calendar-days'],['tareas','Tareas y Notas','fa-list-check'],['config','Configuración','fa-gear']];
 const toggleSb=()=>$('#sb').classList.toggle('-translate-x-full');
-function go(v){view=v;$('#sb').classList.add('-translate-x-full');render();window.scrollTo(0,0)}  // en móvil el menú se oculta al elegir
+function go(v){view=v;$('#sb').classList.add('-translate-x-full');render();window.scrollTo(0,0)}
 function render(){
   $('#nav').innerHTML=NAV.map(n=>`<button class="nav ${n[0]==view?'on':''}" onclick="go('${n[0]}')"><i class="fa-solid ${n[2]} w-5"></i>${n[1]}</button>`).join('');
   $('#main').innerHTML=V[view]();
